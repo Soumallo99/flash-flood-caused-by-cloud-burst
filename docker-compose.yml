@@ -1,0 +1,194 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────── Databases ───────────────────────────
+  db:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.db
+    container_name: flood_db
+    environment:
+      POSTGRES_USER: flood
+      POSTGRES_PASSWORD: flood
+      POSTGRES_DB: flooddb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flood -d flooddb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: flood_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    restart: unless-stopped
+
+  # ─────────────────────────── Setup (one-shot) ───────────────────
+  setup:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: flood_setup
+    command: bash -c "python scripts/setup_real_data.py && python scripts/seed_synthetic.py"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://flood:flood@db:5432/flooddb
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./backend:/app/backend
+    restart: "no"
+
+  # ─────────────────────────── Backend API ────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: flood_backend
+    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://flood:flood@db:5432/flooddb
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+      SEED: 42
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # ─────────────────────────── Simulators (background feeds) ─────
+  simulators:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: flood_simulators
+    command: python -m backend.app.ingestion.simulators
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://flood:flood@db:5432/flooddb
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+      SEED: 42
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # ─────────────────────────── Risk + Spread + Optimizer Workers ──
+  risk-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: flood_risk_worker
+    command: python -m backend.app.services.risk_worker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://flood:flood@db:5432/flooddb
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    restart: unless-stopped
+
+  spread-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: flood_spread_worker
+    command: python -m backend.app.services.spread_worker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://flood:flood@db:5432/flooddb
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    restart: unless-stopped
+
+  optimizer-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: flood_optimizer
+    command: python -m backend.app.services.optimizer_worker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://flood:flood@db:5432/flooddb
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # ─────────────────────────── Dashboard (React/MapLibre) ─────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: flood_dashboard
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  # ─────────────────────────── Adminer (DB browser, optional) ─────
+  adminer:
+    image: adminer:latest
+    container_name: flood_adminer
+    depends_on:
+      - db
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

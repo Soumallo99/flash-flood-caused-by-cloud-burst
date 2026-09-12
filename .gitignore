@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Node
+node_modules/
+.npm/
+.next/
+.parcel-cache/
+.vite/
+svelte-kit/
+.nuxt/
+.output/
+out/
+coverage/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Data (downloaded at runtime / generated)
+data/raw/
+data/processed/
+data/cache/
+*.tif
+*.tiff
+*.hgt
+*.hgt.gz
+*.shp
+*.shx
+*.dbf
+*.prj
+*.geojsonl
+
+# Env / secrets
+.env
+.env.*
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Keep directory structure in git
+!data/raw/.gitkeep
+!data/raw/dem/.gitkeep
+!data/processed/.gitkeep
+!data/cache/.gitkeep
